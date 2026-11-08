@@ -85,6 +85,11 @@ tr.tot td{font-weight:600;background:#f6f8f7;border-top:2px solid #cfd6d2}
 #ready .row{margin-top:10px}
 .tabdot{display:inline-block;width:12px;height:12px;border-radius:3px;flex:none}
 .foot.owner{margin-top:6px;line-height:1.7;letter-spacing:.2px}
+#yearAlert{margin-top:12px;border:2px solid var(--bad);background:var(--bad-bg);color:var(--bad);border-radius:var(--radius);padding:12px 16px;font-size:14px}
+#yearAlert .t{font-weight:700;font-size:15px;margin-bottom:4px}
+#yearAlert ul{margin:4px 0 0;padding-left:20px}
+#yearAlert.soft{border-color:#e0b27a;background:var(--warn-bg);color:var(--warn)}
+input.yrbad{border:2px solid var(--bad)!important;background:var(--bad-bg)}
 .foot{font-size:12.5px;color:var(--muted);text-align:center;margin-top:24px}
 </style>
 </head>
@@ -97,9 +102,9 @@ tr.tot td{font-weight:600;background:#f6f8f7;border-top:2px solid #cfd6d2}
 
 <section class="card">
   <h2><span class="step">1</span>นำเข้าไฟล์งบทดลอง</h2>
-  <p class="hint">เลือกหรือลากไฟล์ Excel (.xlsx .xls .xlsm .csv) มาวางได้ครั้งละหลายไฟล์ ไฟล์ที่มีหลายชีตจะถือว่า 1 ชีต = 1 หน่วยเบิกจ่าย ระบบหาแถวหัวตารางให้เอง (มีหรือไม่มีหัวรายงานก็ได้)</p>
+  <p class="hint"><b>ระบบคัดแยกไฟล์ตามปีงบประมาณในหัวรายงานให้เอง</b> — แก้เลขปีในช่องด้านล่างได้ทุกปี ไฟล์ที่ปีไม่ตรงกับที่กำหนดจะถูกข้าม (ติ๊กเลือกเองได้ในขั้นที่ 2) และวางไฟล์หลายปีปนกันในช่องใดก็ได้<br>เลือกหรือลากไฟล์ Excel (.xlsx .xls .xlsm .csv) มาวางได้ครั้งละหลายไฟล์ ไฟล์ที่มีหลายชีตจะถือว่า 1 ชีต = 1 หน่วยเบิกจ่าย ระบบหาแถวหัวตารางให้เอง (มีหรือไม่มีหัวรายงานก็ได้)</p>
   <div class="modes">
-    <label class="mode"><input type="radio" name="mode" value="split"><span><b>แยกไฟล์ตามปี</b><br><small>ไฟล์ปี 2569 ชุดหนึ่ง และไฟล์ปี 2570 อีกชุดหนึ่ง</small></span></label>
+    <label class="mode"><input type="radio" name="mode" value="split"><span><b>แยกไฟล์ตามปี</b><br><small>ไฟล์ปี <b class="ya"></b> ชุดหนึ่ง และไฟล์ปี <b class="yb"></b> อีกชุดหนึ่ง</small></span></label>
     <label class="mode"><input type="radio" name="mode" value="combined" checked><span><b>ไฟล์เดียวมีทั้งสองปี</b><br><small>ยอดยกมา = ปีที่ 1 · ยอดคงเหลือ (หลังเดบิต/เครดิต) = ปีที่ 2</small></span></label>
   </div>
   <div class="grid2">
@@ -124,6 +129,7 @@ tr.tot td{font-weight:600;background:#f6f8f7;border-top:2px solid #cfd6d2}
     <button id="btnDemo" class="small">ลองด้วยข้อมูลตัวอย่าง</button>
     <button id="btnClear" class="small">ล้างข้อมูลทั้งหมด</button>
   </div>
+  <div id="yearAlert" hidden></div>
   <div id="loadMsg"></div>
   <div id="ready" hidden></div>
 </section>
@@ -448,7 +454,7 @@ function addWorkbook(wb, fileName, year, msgs){
   for (const {sn, rows, layout} of sheetsFound) {
     const sig = signature(layout);
     if (!S.groups.has(sig)) S.groups.set(sig, {id: S.groups.size + 1, headers: layout.headers, colCount: layout.colCount, codeCol: layout.codeCol, map: guessMap(layout, rows), sample: sampleData(rows, layout)});
-    S.sheets.push({id: nextId++, year, file: fileName, sheetName: sn, multi, rows, layout, sig, hdrUnit: detectUnitFromHeader(rows, layout), period: detectPeriodCell(rows, layout), name: "", include: true, nameEdited: false});
+    S.sheets.push({id: nextId++, year, dropYear: year, pyear: null, file: fileName, sheetName: sn, multi, rows, layout, sig, hdrUnit: detectUnitFromHeader(rows, layout), period: detectPeriodCell(rows, layout), name: "", include: true, nameEdited: false});
   }
   if (!sheetsFound.length && names.length > 1) msgs.push(`ไฟล์ ${fileName}: ไม่พบชีตที่มีเลขที่บัญชี`);
 }
@@ -475,18 +481,40 @@ function defaultName(s){
 
 let yearEdited = false;
 function autoYears(){
+  for (const s of S.sheets) s.pyear = periodYear(s.period && s.period.text);
   if (yearEdited || !S.sheets.length) return;
-  const most = list => { const c = {}; list.filter(Boolean).forEach(y => c[y] = (c[y]||0)+1); return Object.keys(c).sort((a,b) => c[b]-c[a])[0]; };
+  const most = list => { const c = {}; list.filter(Boolean).forEach(y => c[y] = (c[y]||0)+1); return Object.keys(c).sort((a,b) => c[b]-c[a] || b-a)[0]; };
   if (isCombined()) {
-    const y = most(S.sheets.filter(s => s.year !== 2).map(s => periodYear(s.period && s.period.text)));
+    const y = most(S.sheets.filter(s => s.dropYear !== 2).map(s => s.pyear)) || most(S.sheets.map(s => s.pyear));
     if (y) { $("#yl1").value = y; $("#yl0").value = String(+y - 1); }
-  } else for (const yy of [0,1]) {
-    const y = most(S.sheets.filter(s => s.year === yy).map(s => periodYear(s.period && s.period.text)));
-    if (y) $("#yl"+yy).value = y;
+  } else {
+    let y0 = most(S.sheets.filter(s => s.dropYear !== 1).map(s => s.pyear)), y1 = most(S.sheets.filter(s => s.dropYear === 1).map(s => s.pyear));
+    if (!y1 || y1 === y0) {   // all files in one box: take the two most common years, older = year 1
+      const c = {}; S.sheets.forEach(s => s.pyear && (c[s.pyear] = (c[s.pyear]||0)+1));
+      const top = Object.keys(c).sort((a,b) => c[b]-c[a]).slice(0, 2).sort();
+      if (top.length === 2) [y0, y1] = top; else if (top.length === 1) { y0 = top[0]; y1 = String(+top[0] + 1); }
+    }
+    if (y0) $("#yl0").value = y0; if (y1) $("#yl1").value = y1;
+  }
+}
+// Put every sheet in the year bucket that matches the fiscal year in its report header.
+// Sheets whose year matches neither year are excluded (unless the user ticked them by hand).
+function assignYears(){
+  const c = isCombined(), y0 = $("#yl0").value.trim(), y1 = $("#yl1").value.trim();
+  const ok = /^\d{4}$/.test(y0) && /^\d{4}$/.test(y1) && y0 !== y1;
+  const fallback = s => c ? (s.dropYear === 2 ? 2 : 0) : (s.dropYear === 2 ? 0 : s.dropYear);
+  for (const s of S.sheets) {
+    let target = null; s.yearNote = ""; s.yearMismatch = false;
+    if (!ok || !s.pyear) { target = fallback(s); if (ok && !s.pyear) s.yearNote = "ไม่พบปีในหัวรายงาน"; }
+    else if (c) target = s.pyear === y1 ? 0 : s.pyear === y0 ? 2 : null;
+    else target = s.pyear === y0 ? 0 : s.pyear === y1 ? 1 : null;
+    if (target === null) { s.yearMismatch = true; s.yearNote = `ปี ${s.pyear} ไม่ตรงกับปีที่กำหนด`; target = fallback(s); }
+    if (s.year !== target) s.year = target;
+    if (!s.manual) s.include = !s.yearMismatch;
   }
 }
 function afterLoad(msgs){
-  autoYears();
+  autoYears(); assignYears();
   for (const s of S.sheets) if (!s.nameEdited) s.name = defaultName(s);
   for (const s of S.sheets) s.records = null;
   const box = $("#loadMsg");
@@ -676,6 +704,51 @@ function buildReport(){
 }
 
 /* ============================ rendering ============================ */
+/* ---------- fiscal-year warnings ---------- */
+function yearIssues(){
+  const c = isCombined(), y0 = $("#yl0").value.trim(), y1 = $("#yl1").value.trim();
+  const out = {invalid: "", missing: [], excluded: [], forced: [], noYear: [], serious: false};
+  if (!S.sheets.length) return out;
+  if (!/^\d{4}$/.test(y0) || !/^\d{4}$/.test(y1)) out.invalid = "เลขปีต้องเป็นตัวเลข 4 หลัก เช่น 2569";
+  else if (y0 === y1) out.invalid = "ปีที่ 1 และปีที่ 2 ต้องไม่ซ้ำกัน";
+  else if (+y1 !== +y0 + 1) out.gap = `ปีที่ 1 (${y0}) กับปีที่ 2 (${y1}) ไม่ใช่ปีติดกัน`;
+  const withYear = S.sheets.filter(s => s.pyear);
+  if (!out.invalid && withYear.length) {
+    const has = y => withYear.some(s => s.pyear === y);
+    if (c) {
+      if (!has(y1)) out.missing.push({y: y1, what: "ไฟล์ปีปัจจุบัน"});
+      if (S.sheets.some(s => s.dropYear === 2) && !has(y0)) out.missing.push({y: y0, what: "ไฟล์งบทดลองปีก่อน"});
+    } else { if (!has(y0)) out.missing.push({y: y0, what: "ไฟล์ปีที่ 1"}); if (!has(y1)) out.missing.push({y: y1, what: "ไฟล์ปีที่ 2"}); }
+  }
+  out.excluded = S.sheets.filter(s => s.yearMismatch && !s.include);
+  out.forced = S.sheets.filter(s => s.yearMismatch && s.include);
+  out.noYear = S.sheets.filter(s => s.include && !s.pyear);
+  out.serious = !!out.invalid || out.missing.length > 0 || out.forced.length > 0;
+  return out;
+}
+function renderYearAlert(){
+  const box = $("#yearAlert"), I = yearIssues();
+  const missY = new Set(I.missing.map(m => m.y));
+  ["#yl0", "#yl1"].forEach(id => $(id).classList.toggle("yrbad", !!I.invalid || missY.has($(id).value.trim())));
+  const items = [];
+  if (I.invalid) items.push(I.invalid);
+  for (const m of I.missing) items.push(`ไม่พบ${m.what}ของปี <b>${esc(m.y)}</b> ในหัวรายงานของไฟล์ใดเลย — ตรวจเลขปีที่กรอก หรือไฟล์ที่นำเข้า`);
+  if (I.forced.length) items.push(`มี <b>${I.forced.length}</b> ชีตที่ปีในรายงานไม่ตรงกับปีที่กำหนด แต่ถูกเลือกให้ใช้คำนวณ: ${I.forced.slice(0, 8).map(s => esc(`${unitKey(s.name)} (ปี ${s.pyear})`)).join(", ")}${I.forced.length > 8 ? " …" : ""}`);
+  const soft = [];
+  if (I.excluded.length) {
+    const by = {}; I.excluded.forEach(s => (by[s.pyear] = by[s.pyear] || []).push(s));
+    for (const [y, list] of Object.entries(by)) soft.push(`ข้าม <b>${list.length}</b> ชีตที่เป็นปี <b>${esc(y)}</b> (ไม่ตรงกับปีที่กำหนด): ${list.slice(0, 8).map(s => esc(unitKey(s.name))).join(", ")}${list.length > 8 ? " …" : ""}`);
+  }
+  if (I.gap) soft.push(esc(I.gap) + " — ถ้าตั้งใจเปรียบเทียบข้ามปีก็ใช้ต่อได้");
+  if (I.noYear.length) soft.push(`<b>${I.noYear.length}</b> ชีตไม่มีปีในหัวรายงาน ระบบตรวจปีให้ไม่ได้ — ตรวจเองว่าเป็นปีที่ถูกต้อง: ${I.noYear.slice(0, 8).map(s => esc(s.name)).join(", ")}${I.noYear.length > 8 ? " …" : ""}`);
+  if (!items.length && !soft.length) { box.hidden = true; return; }
+  box.className = items.length ? "" : "soft";
+  box.innerHTML = `<div class="t">⚠ ${items.length ? "ตรวจสอบเลขปีก่อนใช้งาน" : "แจ้งเตือนเรื่องปีของไฟล์"}</div><ul>${[...items, ...soft].map(x => `<li>${x}</li>`).join("")}</ul>
+    ${I.excluded.length || I.forced.length || I.noYear.length ? `<div style="margin-top:6px"><button class="small" id="btnSeeYears">ดูรายการชีตในขั้นที่ 2</button></div>` : ""}`;
+  box.hidden = false;
+  const b = $("#btnSeeYears"); if (b) b.onclick = () => $("#secSheets").scrollIntoView({behavior: "smooth"});
+}
+
 function renderReady(){
   const R = S.report, box = $("#ready");
   if (!R || !R.units.length || R.years.length < (isCombined() ? 2 : 1)) { box.hidden = true; return; }
@@ -688,6 +761,7 @@ function renderReady(){
     <div style="font-size:14px">${yrs}${pk[0] ? ` · งวด “${esc(pk[0])}”` : ""}</div>
     ${R.prior.length ? `<div style="font-size:14px;margin-top:4px"><span class="tabdot" style="background:#D9822B;display:inline-block;vertical-align:-1px"></span> ไฟล์ปีก่อน ${R.priorUnits.size} หน่วย — บัญชีขึ้นต้น ${esc(R.st.priorP.join(", "))} ของปี ${esc(yearLabel(0))} ใช้ยอดคงเหลือปีก่อน</div>` : ""}
     ${bad ? `<div class="msg warn" style="margin-top:8px">${bad} หน่วยไม่ผ่านการตรวจเบื้องต้น — ดูแท็บ “ตรวจสอบข้อมูล” ในขั้นที่ 5</div>` : ""}
+    ${(() => { const mm = S.sheets.filter(s => s.yearMismatch && !s.include); return mm.length ? `<div class="msg warn" style="margin-top:8px">ข้าม ${mm.length} ชีตที่ปีในหัวรายงานไม่ตรงกับปีที่กำหนด: ${mm.slice(0,10).map(s => esc(`${unitKey(s.name)} (ปี ${s.pyear})`)).join(", ")}${mm.length > 10 ? " …" : ""} — ถ้าต้องการใช้ ติ๊กเลือกในขั้นที่ 2</div>` : ""; })()}
     ${odd.length ? `<div class="msg warn" style="margin-top:8px">งวดรายงานไม่ตรงกับหน่วยอื่น: ${odd.slice(0,10).map(s => esc(`${unitKey(s.name)} (${s.period.text})`)).join(", ")}${odd.length > 10 ? " …" : ""}</div>` : ""}
     <div class="row"><button class="primary" id="btnQuick">ดาวน์โหลด Excel แบบสูตรทันที</button><button id="btnTune">ปรับแต่งก่อน ↓</button></div>
     <div class="hint" style="margin:8px 0 0">ไฟล์แบบสูตร: ชีตสรุปทุกช่องเป็นสูตร SUMIFS ดึงจากชีตข้อมูลดิบของแต่ละหน่วย ตรวจย้อนได้ พร้อมชีตเปรียบเทียบ ตรวจสอบ และสรุปการตั้งค่า</div>`;
@@ -711,7 +785,7 @@ function applyMode(){
   if (c && y1) $("#loadMsg").innerHTML = `<div class="msg warn">มีไฟล์ที่นำเข้าไว้ในช่องปีที่ 2 อยู่ ${y1} ชีต — โหมดนี้จะนำทุกชีตมาใช้ทั้งยอดยกมาและยอดคงเหลือ หากไม่ต้องการ ให้ลบออกในขั้นที่ 2</div>`;
 }
 document.querySelectorAll("input[name=mode]").forEach(r => r.addEventListener("change", () => {
-  const c = isCombined(); $("#sM0").value = c ? "opening" : "balance"; $("#sM1").value = "balance"; autoYears();
+  const c = isCombined(); $("#sM0").value = c ? "opening" : "balance"; $("#sM1").value = "balance"; autoYears(); assignYears();
   applyMode(); renderAll();
 }));
 
@@ -724,16 +798,17 @@ function renderAll(){
     const files = new Set(ss.map(s => s.file)).size;
     if (ss.length || y < 2) $("#m"+y).textContent = ss.length ? `${files} ไฟล์ · ${ss.length} หน่วย/ชีต` : "ยังไม่มีไฟล์";
   }
-  if (!has) return;
+  if (!has) { $("#yearAlert").hidden = true; return; }
   renderSheets(); renderMap(); refresh();
 }
 
 function renderSheets(){
   const rows = S.sheets.slice().sort((a,b) => a.year - b.year || cmpTh(a.name, b.name));
-  let h = `<table><thead><tr><th>ใช้</th><th>ปี</th><th>ชื่อหน่วยเบิกจ่าย</th><th>ไฟล์</th><th>ชีต</th><th>รูปแบบ</th><th class="num">แถวหัวตาราง</th><th></th></tr></thead><tbody>`;
+  let h = `<table><thead><tr><th>ใช้</th><th>ปี</th><th>ปีในรายงาน</th><th>ชื่อหน่วยเบิกจ่าย</th><th>ไฟล์</th><th>ชีต</th><th>รูปแบบ</th><th class="num">แถวหัวตาราง</th><th></th></tr></thead><tbody>`;
   for (const s of rows) {
     const g = S.groups.get(s.sig);
-    h += `<tr><td><input type="checkbox" data-inc="${s.id}" ${s.include?"checked":""}></td><td>${s.year === 2 ? `<span class="pill warn">${esc(yearLabel(0))} ปีก่อน</span>${isCombined() ? "" : " (ไม่ใช้ในโหมดนี้)"}` : isCombined() ? "ทั้งสองปี" : esc(yearLabel(s.year))}</td>
+    h += `<tr><td><input type="checkbox" data-inc="${s.id}" ${s.include?"checked":""}></td><td>${s.year === 2 ? `<span class="pill warn">${esc(yearLabel(0))} ปีก่อน</span>${isCombined() ? "" : " (ไม่ใช้ในโหมดนี้)"}` : isCombined() ? "ปีปัจจุบัน" : esc(yearLabel(s.year))}</td>
+      <td>${esc(s.pyear || "—")}${s.yearNote ? ` <span class="pill ${s.yearMismatch ? "bad" : "warn"}">${esc(s.yearNote)}</span>` : ""}</td>
       <td><input type="text" data-name="${s.id}" value="${esc(s.name)}" style="width:280px"></td>
       <td>${esc(s.file)}</td><td>${esc(s.sheetName)}</td><td>รูปแบบ ${g.id}</td>
       <td class="num">${s.layout.hdrRows.length ? s.layout.hdrRows.map(r=>r+1).join(", ") : "–"}</td>
@@ -793,7 +868,7 @@ function renderOut(){
     + (R.warnings.length ? `<span class="pill warn">ข้อสังเกต ${R.warnings.length} รายการ</span>` : "");
   const sheets = tabs.filter(t => t.k !== "chk").map(t => t.label).concat(R.st.longSheet && R.years.length === 2 ? ["เปรียบเทียบ (แนวยาว)"] : [], ["สรุปการตั้งค่า", "ตรวจสอบข้อมูล"]);
   $("#sheetsNote").textContent = "ชีตในไฟล์แบบค่า: " + sheets.join(" · ");
-  renderReady(imbalance);
+  renderReady(imbalance); renderYearAlert();
   const TT = R.st.orient === "T";
   $("#preview").innerHTML = S.tab === "chk" ? previewCheck() : S.tab === "cmp" ? (TT ? previewT("cmp") : previewCmp()) : (TT ? previewT(+S.tab.slice(1)) : previewYear(+S.tab.slice(1)));
   const c1 = $("#preview th.stick1"); if (c1) $("#preview").style.setProperty("--c1w", c1.offsetWidth + "px");
@@ -1155,10 +1230,18 @@ function buildXlsxFallback(){
 let downloadsP = null;
 try { if (window.claude && typeof window.claude.use === "function") downloadsP = window.claude.use("downloads"); } catch(e) {}
 
-async function doDownload(kind, btn, host){
+async function doDownload(kind, btn, host, force){
   btn = btn || $("#btnXlsx");
   let box = $("#dlMsg");
   if (host) { box = host.querySelector(".dlbox") || host.appendChild(Object.assign(document.createElement("div"), {className: "dlbox"})); }
+  const I = yearIssues();
+  if (I.serious && !force) {
+    box.innerHTML = `<div class="msg err"><b>ยังมีปัญหาเรื่องเลขปี</b> — ${[I.invalid, ...I.missing.map(m => `ไม่พบ${m.what}ของปี ${esc(m.y)}`), I.forced.length ? `มี ${I.forced.length} ชีตที่ปีไม่ตรงถูกเลือกให้คำนวณ` : ""].filter(Boolean).join(" · ")}
+      <div class="row" style="margin-top:8px"><button class="small" data-force="1">ยืนยัน ดาวน์โหลดต่อ</button><button class="small" data-cancel="1">ยกเลิก กลับไปแก้</button></div></div>`;
+    box.querySelector("[data-force]").onclick = () => doDownload(kind, btn, host, true);
+    box.querySelector("[data-cancel]").onclick = () => { box.innerHTML = ""; $("#yl0").scrollIntoView({behavior: "smooth", block: "center"}); };
+    return;
+  }
   btn.disabled = true; box.innerHTML = `<div class="msg info">กำลังสร้างไฟล์… (130 หน่วยใช้เวลาประมาณไม่กี่วินาที)</div>`;
   await new Promise(r => setTimeout(r, 30));
   try {
@@ -1747,7 +1830,7 @@ function bindDrop(y){
   d.addEventListener("dragover", e => { e.preventDefault(); d.classList.add("over"); });
   d.addEventListener("dragleave", () => d.classList.remove("over"));
   d.addEventListener("drop", e => { e.preventDefault(); d.classList.remove("over"); if (e.dataTransfer.files.length) readFiles([...e.dataTransfer.files], y); });
-  if ($("#yl"+y)) $("#yl"+y).addEventListener("input", () => { yearEdited = true; applyMode(); renderSheets(); refresh(); });
+  if ($("#yl"+y)) $("#yl"+y).addEventListener("input", () => { yearEdited = true; assignYears(); applyMode(); renderAll(); });
 }
 bindDrop(0); bindDrop(1); bindDrop(2); applyMode();
 $("#btnDemo").onclick = () => { if (typeof XLSX === "undefined") return libErr(); demo(); };
@@ -1755,7 +1838,7 @@ $("#btnClear").onclick = () => { S.sheets = []; S.groups.clear(); S.exclUnits.cl
 $("#nameSrc").onchange = () => { for (const s of S.sheets) { s.nameEdited = false; s.name = defaultName(s); } renderSheets(); refresh(); };
 $("#sheetTbl").addEventListener("change", e => {
   const t = e.target;
-  if (t.dataset.inc) { S.sheets.find(s => s.id == t.dataset.inc).include = t.checked; refresh(); }
+  if (t.dataset.inc) { const sh = S.sheets.find(s => s.id == t.dataset.inc); sh.include = t.checked; sh.manual = true; refresh(); }
   if (t.dataset.name) { const s = S.sheets.find(s => s.id == t.dataset.name); s.name = t.value.trim() || defaultName(s); s.nameEdited = true; refresh(); }
 });
 $("#sheetTbl").addEventListener("click", e => {
